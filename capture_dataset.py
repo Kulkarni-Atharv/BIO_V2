@@ -35,8 +35,8 @@ def capture_faces():
             count += 1
             
             # Save the captured image into the datasets folder
-            # Save as grayscale for better training
-            cv2.imwrite(f"{dir_name}/User.{face_id}.{count}.jpg", gray[y:y+h,x:x+w])
+            # Save as color for better display, training will convert to grayscale needed
+            cv2.imwrite(f"{dir_name}/User.{face_id}.{count}.jpg", img[y:y+h,x:x+w])
             
             cv2.imshow('image', img)
             

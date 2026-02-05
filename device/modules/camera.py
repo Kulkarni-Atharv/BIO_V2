@@ -6,7 +6,16 @@ import time
 class Camera:
     def __init__(self, source=0):
         self.source = source
-        self.cap = cv2.VideoCapture(self.source)
+        # Try GStreamer pipeline for Libcamera on Raspberry Pi
+        gst_pipeline = (
+            "libcamerasrc ! video/x-raw, width=640, height=480, framerate=30/1 ! "
+            "videoconvert ! videoscale ! video/x-raw, format=BGR ! appsink"
+        )
+        # Attempt to open using GStreamer first
+        self.cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+        if not self.cap.isOpened():
+             print("[Camera] GStreamer pipeline failed, falling back to index 0...")
+             self.cap = cv2.VideoCapture(self.source)
         self.ret = False
         self.frame = None
         self.running = False
