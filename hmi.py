@@ -48,7 +48,7 @@ class VideoThread(QThread):
         )
         cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
         if not cap.isOpened():
-            cap = cv2.VideoCapture(0)
+            cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
         
         last_attendance_time = {}
         last_recognized_name = None
