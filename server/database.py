@@ -3,55 +3,49 @@ import logging
 
 logger = logging.getLogger("ServerDB")
 
-try:
-    import pyodbc
-    PYODBC_AVAILABLE = True
-except ImportError:
-    PYODBC_AVAILABLE = False
-    logger.warning("pyodbc not available (unixODBC missing?). Using Mock Database.")
+import sqlite3
+import datetime
+import sys
+import os
+
+# Add project root to path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from shared.config import SERVER_DB_PATH
 
 class ServerDatabase:
     def __init__(self, connection_string=None):
-        self.connection_string = connection_string
-        if self.connection_string and PYODBC_AVAILABLE:
-            self._init_db()
-        else:
-            logger.info("Initializing in Mock Mode (No SQL Server connection).")
+        # connection_string argument is kept for compatibility but ignored in favor of SERVER_DB_PATH
+        self.db_path = SERVER_DB_PATH
+        self._init_db()
 
     def _init_db(self):
         try:
-            with pyodbc.connect(self.connection_string) as conn:
+            with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='AttendanceLogs' and xtype='U')
-                    CREATE TABLE AttendanceLogs (
-                        ID INT IDENTITY(1,1) PRIMARY KEY,
-                        DeviceID NVARCHAR(50),
-                        Name NVARCHAR(100),
+                    CREATE TABLE IF NOT EXISTS AttendanceLogs (
+                        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                        DeviceID TEXT,
+                        Name TEXT,
                         Timestamp DATETIME,
-                        ReceivedAt DATETIME DEFAULT GETDATE()
+                        ReceivedAt DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
                 conn.commit()
-                logger.info("Database initialized/verified.")
+                logger.info(f"Database initialized at {self.db_path}")
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
 
     def insert_attendance(self, device_id, name, timestamp):
-        if not self.connection_string or not PYODBC_AVAILABLE:
-            # Mock behavior for testing when no DB is configured
-            logger.info(f"[MOCK DB] Insert: Device={device_id}, Name={name}, Time={timestamp}")
-            return True
-
         try:
-            with pyodbc.connect(self.connection_string) as conn:
+            with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                from datetime import datetime
-                dt = datetime.fromtimestamp(timestamp)
+                dt = datetime.datetime.fromtimestamp(timestamp)
                 
                 cursor.execute("INSERT INTO AttendanceLogs (DeviceID, Name, Timestamp) VALUES (?, ?, ?)", 
                                (device_id, name, dt))
                 conn.commit()
+                logger.info(f"Saved to DB: {name} from {device_id}")
             return True
         except Exception as e:
             logger.error(f"Database insert error: {e}")

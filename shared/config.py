@@ -10,6 +10,7 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 SERVER_IP = "127.0.0.1"  # Default to localhost for testing
 SERVER_PORT = 8000
 API_BASE_URL = f"http://{SERVER_IP}:{SERVER_PORT}/api"
+SERVER_DB_PATH = os.path.join(DATA_DIR, "server_attendance.db")
 
 # Device Configuration
 DEVICE_ID = "cm4_device_001"
