@@ -90,17 +90,38 @@ class FaceRecognizer:
                 face_locations.append((x, y, w_box, h_box))
                 
                 # Alignment
+                # Alignment
                 face_img = None
+                name = "Unknown"
+                
                 if aligner:
                     try:
-                        
-                        # Threshold (Tunable: 0.5 is safe, 0.6 is stricter)
-                        if max_score > RECOGNITION_THRESHOLD:
-                            name = self.known_names[best_idx]
-                            # name = f"{name} ({max_score:.2f})" # Debug
-                        
+                        face_img = aligner.align(frame, landmarks)
+                        if face_img is not None:
+                            # MobileFaceNet expects RGB. aligner returns same as input (BGR if frame is BGR).
+                            # We need to ensure blobFromImage parameters are correct.
+                            # blobFromImage takes BGR if swapRB=True --> RGB.
+                            # Our previous code used `swapRB=True`.
+                            
+                            # Get embedding
+                            blob = cv2.dnn.blobFromImage(face_img, 1.0/128.0, (112, 112), (127.5, 127.5, 127.5), swapRB=True)
+                            self.recognizer.setInput(blob)
+                            embedding = self.recognizer.forward()
+                            embedding_norm = cv2.normalize(embedding, None, alpha=1, beta=0, norm_type=cv2.NORM_L2)
+                            
+                            # Compare
+                            if len(self.known_embeddings) > 0:
+                                scores = np.dot(self.known_embeddings, embedding_norm.T).flatten()
+                                best_match_idx = np.argmax(scores)
+                                max_score = scores[best_match_idx]
+                                
+                                if max_score > RECOGNITION_THRESHOLD:
+                                    name = self.known_names[best_match_idx]
                     except Exception as e:
                         logger.error(f"Inference error: {e}")
+                else:
+                    # Fallback (same as original logic but inside else)
+                    pass 
 
                 face_names.append(name)
 
