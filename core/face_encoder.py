@@ -145,6 +145,26 @@ class FaceEncoder:
             self.known_embeddings = filtered_embeddings
             self.known_names = filtered_names
         
+        # 3. Clean up processed_images.json (Remove paths that don't exist)
+        # This ensures if a user is added back with same ID/Name, we don't skip their images if we want to re-process (though usually we wouldn't want to skip if file is same? Actually if file is same, we skip. But if folder deleted, file gone. If re-added, file is new inode or same path? Same path.
+        # If I delete folder, then re-create folder and add SAME image file.
+        # existing path in processed_files is valid?
+        # Yes, path is string.
+        # But if I want to "re-learn" I should probably clean it up.
+        # If user deletes user, then re-adds, we want to re-encode.
+        
+        # ACTUALLY: If user deletes "Samir", then re-adds "Samir" with *different* photos (but same filenames? unlikely).
+        # Safe bet: If file doesn't exist on disk, remove from processed log.
+        
+        existing_processed = set()
+        for p in processed_files:
+            if os.path.exists(p):
+                existing_processed.add(p)
+        
+        if len(existing_processed) < len(processed_files):
+            logger.info(f"Garbage Collection: Removed {len(processed_files) - len(existing_processed)} stale entries from processed log.")
+            processed_files = existing_processed
+
         # --- GARBAGE COLLECTION END ---
 
         images_to_process = [img for img in new_images if img not in processed_files]
