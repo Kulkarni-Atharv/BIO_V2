@@ -808,12 +808,17 @@ class MainApp(QMainWindow):
         self.thread.start_capture(uid, name)
 
     def update_video_feed(self, img):
+        # Scale image to fit the label
         current_idx = self.central_widget.currentIndex()
         # Only show video in Home(0) and Register(2)
         if current_idx == 0:
             target = self.video_label
         elif current_idx == 2:
-            target = self.video_label_reg
+            # Check if registration screen is initialized
+            if hasattr(self, 'video_label_reg') and self.video_label_reg is not None:
+                target = self.video_label_reg
+            else:
+                return
         else:
             return
         
