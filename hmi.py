@@ -217,7 +217,13 @@ class VideoThread(QThread):
         elif cap: cap.release()
 
     def process_recognition(self, img, last_name, consecutive):
-        locations, names = self.recognizer.recognize_faces(img)
+        if self.recognizer is None:
+            return
+        try:
+            locations, names = self.recognizer.recognize_faces(img)
+        except Exception as e:
+            print(f"Recognition error: {e}")
+            return
         
         for (x, y, w, h), name in zip(locations, names):
             color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
@@ -235,15 +241,17 @@ class VideoThread(QThread):
 
             if name != "Unknown":
                 self.attendance_signal.emit(f"MATCH:{name}")
-    
+
     def process_capture(self, img):
-         if self.recognizer.detector:
-             h, w, _ = img.shape
-             self.recognizer.detector.setInputSize((w, h))
-             _, faces = self.recognizer.detector.detect(img)
-             
-             if faces is not None:
-                 for face in faces:
+        if self.recognizer is None or self.recognizer.detector is None:
+            return
+        try:
+            h, w, _ = img.shape
+            self.recognizer.detector.setInputSize((w, h))
+            _, faces = self.recognizer.detector.detect(img)
+            
+            if faces is not None:
+                for face in faces:
                     box = face[:4].astype(int)
                     x, y, w_box, h_box = box[0], box[1], box[2], box[3]
                     
@@ -270,6 +278,9 @@ class VideoThread(QThread):
                         self.mode = "IDLE"
                         self.attendance_signal.emit("CAPTURE_COMPLETE")
                         break
+        except Exception as e:
+            print(f"Capture error: {e}")
+            return
 
     def start_capture(self, user_id, user_name):
         self.capture_dir = os.path.join(KNOWN_FACES_DIR, f"{user_id}_{user_name}")
