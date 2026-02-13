@@ -919,7 +919,7 @@ class MainApp(QMainWindow):
 if __name__ == "__main__":
     # Raspberry Pi Optimization
     if os.uname().machine.startswith('arm'):
-        os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = "/usr/lib/aarch64-linux-gnu/qt5/plugins"
+        # os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = "/usr/lib/aarch64-linux-gnu/qt5/plugins"
         os.environ["XDG_SESSION_TYPE"] = "xcb"
     
     # Global Exception Hook to catch crashes
