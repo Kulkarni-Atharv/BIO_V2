@@ -311,19 +311,15 @@ class MainApp(QMainWindow):
         self.central_widget = QStackedWidget()
         self.setCentralWidget(self.central_widget)
         
-        # Screens Indices:
-        # 0: Home
-        # 1: Settings
-        # 2: Register
-        # 3: Delete
-        # 4: About
-        
+        # CRITICAL: Initialize ALL screens BEFORE starting video thread
+        # This prevents segfaults from thread trying to update non-existent widgets
         self.init_home_screen()
         self.init_settings_screen()
         self.init_register_screen()
         self.init_delete_screen()
         self.init_about_screen()
         
+        # NOW start the video thread after all widgets exist
         self.thread = VideoThread()
         self.thread.change_pixmap_signal.connect(self.update_video_feed)
         self.thread.attendance_signal.connect(self.handle_video_signal)
@@ -808,22 +804,21 @@ class MainApp(QMainWindow):
         self.thread.start_capture(uid, name)
 
     def update_video_feed(self, img):
-        # Scale image to fit the label
         current_idx = self.central_widget.currentIndex()
         # Only show video in Home(0) and Register(2)
         if current_idx == 0:
             target = self.video_label
         elif current_idx == 2:
-            # Check if registration screen is initialized
-            if hasattr(self, 'video_label_reg') and self.video_label_reg is not None:
-                target = self.video_label_reg
-            else:
-                return
+            target = self.video_label_reg
         else:
             return
         
-        pixmap = QPixmap.fromImage(img)
-        target.setPixmap(pixmap)
+        try:
+            pixmap = QPixmap.fromImage(img)
+            target.setPixmap(pixmap)
+        except:
+            # Silently ignore any Qt errors during screen transitions
+            pass
 
     def handle_video_signal(self, msg):
         current_idx = self.central_widget.currentIndex()
