@@ -101,6 +101,7 @@ class LocalDatabase:
                     cursor.execute("""
                         ALTER TABLE attendance_log
                         ADD COLUMN user_id VARCHAR(100) AFTER id,
+                        ADD COLUMN punch_time DATETIME AFTER device_id,
                         ADD COLUMN punch_date DATE AFTER punch_time,
                         ADD COLUMN punch_clock TIME AFTER punch_date,
                         ADD COLUMN punch_type ENUM('IN','OUT') AFTER punch_clock,
