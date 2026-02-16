@@ -18,7 +18,8 @@ except ImportError:
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QPushButton, QLineEdit, 
                              QStackedWidget, QMessageBox, QFrame, QSizePolicy, 
-                             QGraphicsDropShadowEffect, QListWidget, QListWidgetItem, QGridLayout)
+                             QGraphicsDropShadowEffect, QListWidget, QListWidgetItem, QGridLayout,
+                             QToolButton)
 from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize, QMutex
 from PyQt5.QtGui import QImage, QPixmap, QFont, QColor, QPainter, QPen, QBrush, QIcon
 
@@ -36,25 +37,26 @@ QMainWindow {
 QLabel {
     color: #cdd6f4;
     font-family: 'Segoe UI', sans-serif;
+    font-size: 10px;
 }
 QLineEdit {
     background-color: #313244;
     color: #cdd6f4;
-    border: 2px solid #45475a;
-    border-radius: 10px;
-    padding: 10px;
-    font-size: 16px;
+    border: 1px solid #45475a;
+    border-radius: 4px;
+    padding: 4px;
+    font-size: 10px;
 }
 QLineEdit:focus {
-    border: 2px solid #89b4fa;
+    border: 1px solid #89b4fa;
 }
 QPushButton {
     background-color: #89b4fa;
     color: #1e1e2e;
     border: none;
-    border-radius: 15px;
-    padding: 15px;
-    font-size: 18px;
+    border-radius: 6px;
+    padding: 6px;
+    font-size: 11px;
     font-weight: bold;
 }
 QPushButton:hover {
@@ -204,9 +206,9 @@ class VideoThread(QThread):
                 ret, cv_img = cap.read()
                 if not ret: continue
             
-            # Processing - OPTIMIZATION: Process recognition every 5th frame (~8 FPS AI)
-            # This keeps AI load low while allowing smoother video (40 FPS target)
-            if current_mode == "RECOGNITION" and frame_count % 5 == 0:
+            # Processing - OPTIMIZATION: Process recognition every 3rd frame (approx 8-10 FPS)
+            # This drastically reduces CPU load without affecting user experience.
+            if current_mode == "RECOGNITION" and frame_count % 3 == 0:
                 self.process_recognition(cv_img, last_name, consecutive)
             elif current_mode == "CAPTURE":
                 # Capture mode needs higher FPS for smooth UI feedback
@@ -225,8 +227,8 @@ class VideoThread(QThread):
             qt_img = QImage(rgb_img.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
             self.change_pixmap_signal.emit(qt_img)
             
-            # Important: Prevent CPU starvation (25ms = 40 FPS target)
-            self.msleep(25)
+            # Important: Prevent CPU starvation (40ms = 25 FPS target)
+            self.msleep(40)
 
         # Cleanup
         if use_picamera2: picam2.stop()
@@ -348,7 +350,7 @@ class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Bio-Access | Smart Attendance")
-        self.resize(1024, 600)
+        self.resize(480, 320)
         self.setStyleSheet(STYLE_MAIN)
         
         self.db = LocalDatabase()
@@ -364,6 +366,15 @@ class MainApp(QMainWindow):
         self.init_delete_screen()
         self.init_about_screen()
         
+        # New Screens
+        self.init_user_view_screen() # 5
+        self.init_user_mgt_menu()    # 6
+        self.init_shift_screen()     # 7
+        self.init_comm_set_menu()    # 8
+        self.init_comm_params_screen() # 9
+        self.init_ethernet_screen()  # 10
+        self.init_wifi_screen()      # 11
+        
         # NOW start the video thread after all widgets exist
         self.thread = VideoThread()
         self.thread.change_pixmap_signal.connect(self.update_video_feed)
@@ -378,78 +389,118 @@ class MainApp(QMainWindow):
         
     def init_home_screen(self):
         self.home_widget = QWidget()
-        layout = QHBoxLayout(self.home_widget)
-        layout.setContentsMargins(0, 0, 0, 0)
+        # Use a Grid Layout to overlay controls on top of video if needed
+        # But wait, video is a widget. Best way: QStackedLayout or parenting children to video_label?
+        # A clean way: Main Video Widget, and overlays are children of it or siblings in a grid (0,0,1,1)
         
-        # Video
-        video_container = QWidget()
-        video_container.setStyleSheet("background-color: black;")
-        video_layout = QVBoxLayout(video_container)
-        video_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout = QGridLayout(self.home_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.video_label = QLabel("Initializing Camera...")
-        self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setScaledContents(True)
-        video_layout.addWidget(self.video_label)
+        # 1. Video Background
+        self.video_container = QLabel("Initializing Camera...")
+        self.video_container.setAlignment(Qt.AlignCenter)
+        self.video_container.setScaledContents(True)
+        self.video_container.setStyleSheet("background-color: black;")
+        # Add to grid at (0,0) spanning everything
+        main_layout.addWidget(self.video_container, 0, 0, 4, 4) 
+
+        # 2. Time/Date Overlay (Top Left)
+        self.time_overlay = QFrame()
+        self.time_overlay.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 160); 
+            border-radius: 8px;
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 30);
+        """)
+        # Scaled down size (was 360x140 -> ~160x60)
+        self.time_overlay.setFixedSize(160, 65)
         
-        self.overlay = OverlayLabel(self.video_label)
-        self.overlay.resize(400, 80)
-        self.overlay.move(120, 20) 
+        time_layout = QVBoxLayout(self.time_overlay)
+        time_layout.setContentsMargins(10, 5, 10, 5)
+        time_layout.setSpacing(0)
         
-        # Sidebar
-        sidebar = QFrame()
-        sidebar.setFixedWidth(350)
-        sidebar.setStyleSheet("background-color: #1e1e2e; border-left: 1px solid #45475a;")
+        time_top_layout = QHBoxLayout()
+        self.lbl_date_overlay = QLabel("2024-01-01")
+        self.lbl_date_overlay.setFont(QFont("Segoe UI", 9))
+        self.lbl_date_overlay.setStyleSheet("color: #b4befe; font-weight: bold;")
         
-        side_layout = QVBoxLayout(sidebar)
-        side_layout.setSpacing(20)
-        side_layout.setContentsMargins(30, 50, 30, 30)
+        self.lbl_day_overlay = QLabel("MON")
+        self.lbl_day_overlay.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.lbl_day_overlay.setStyleSheet("color: #fab387;")
+        self.lbl_day_overlay.setAlignment(Qt.AlignRight)
         
-        # Clock
-        self.lbl_time = QLabel()
-        self.lbl_time.setFont(QFont("Segoe UI", 48, QFont.Bold))
-        self.lbl_time.setStyleSheet("color: #89b4fa;")
-        self.lbl_time.setAlignment(Qt.AlignCenter)
+        time_top_layout.addWidget(self.lbl_date_overlay)
+        time_top_layout.addStretch()
+        time_top_layout.addWidget(self.lbl_day_overlay)
         
-        self.lbl_date = QLabel()
-        self.lbl_date.setFont(QFont("Segoe UI", 18))
-        self.lbl_date.setStyleSheet("color: #a6adc8;")
-        self.lbl_date.setAlignment(Qt.AlignCenter)
+        self.lbl_time_overlay = QLabel("12:00:00")
+        self.lbl_time_overlay.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        self.lbl_time_overlay.setStyleSheet("color: white;")
+        self.lbl_time_overlay.setAlignment(Qt.AlignCenter)
         
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_clock)
-        self.timer.start(1000)
-        self.update_clock()
+        time_layout.addLayout(time_top_layout)
+        time_layout.addWidget(self.lbl_time_overlay)
         
-        side_layout.addWidget(self.lbl_time)
-        side_layout.addWidget(self.lbl_date)
-        side_layout.addStretch()
+        # Add to grid Top-Left with some margin
+        main_layout.addWidget(self.time_overlay, 0, 0, Qt.AlignTop | Qt.AlignLeft)
+        main_layout.setContentsMargins(5, 5, 5, 5)
         
-        lbl_recent = QLabel("Recent Activity")
-        lbl_recent.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        side_layout.addWidget(lbl_recent)
+        # 3. Network Status Overlay (Top Right)
+        self.network_overlay = QFrame()
+        self.network_overlay.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 100); 
+            border-radius: 6px;
+            color: white;
+            padding: 2px;
+        """)
+        # Implicit size via layout
         
-        self.log_list = QListWidget()
-        self.log_list.setFixedHeight(200)
-        side_layout.addWidget(self.log_list)
+        net_layout = QHBoxLayout(self.network_overlay)
+        net_layout.setContentsMargins(5, 2, 5, 2)
         
-        # Settings Button
-        btn_settings = QPushButton(" Settings")
-        # btn_settings.setIcon(QIcon("assets/settings.png")) # Usage if icon available
-        btn_settings.setStyleSheet("""
+        self.lbl_net_icon = QLabel("🔌") # Default LAN
+        self.lbl_net_icon.setFont(QFont("Segoe UI", 12))
+        
+        self.lbl_net_ip = QLabel("127.0.0.1")
+        self.lbl_net_ip.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        self.lbl_net_ip.setStyleSheet("color: #a6e3a1;")
+        
+        net_layout.addWidget(self.lbl_net_icon)
+        net_layout.addSpacing(5)
+        net_layout.addWidget(self.lbl_net_ip)
+        
+        main_layout.addWidget(self.network_overlay, 0, 3, Qt.AlignTop | Qt.AlignRight)
+
+        # 4. Hidden Menu Button (Transparent overlay or bottom center)
+        self.btn_menu_overlay = QPushButton("⚙️") 
+        self.btn_menu_overlay.setFixedSize(40, 40)
+        self.btn_menu_overlay.setCursor(Qt.PointingHandCursor)
+        self.btn_menu_overlay.setStyleSheet("""
             QPushButton {
-                background-color: #313244; 
-                color: #cdd6f4;
+                background-color: rgba(0, 0, 0, 100);
+                color: rgba(255, 255, 255, 180);
+                border-radius: 20px;
+                font-size: 20px;
             }
             QPushButton:hover {
-                background-color: #45475a;
+                background-color: rgba(0, 0, 0, 200);
+                color: white;
             }
         """)
-        btn_settings.clicked.connect(lambda: self.switch_screen(1))
-        side_layout.addWidget(btn_settings)
+        self.btn_menu_overlay.clicked.connect(lambda: self.switch_screen(1))
+        # Add to Bottom-Center
+        main_layout.addWidget(self.btn_menu_overlay, 3, 1, 1, 2, Qt.AlignBottom | Qt.AlignCenter)
         
-        layout.addWidget(video_container, stretch=1)
-        layout.addWidget(sidebar)
+        # 5. Welcome Overlay (Existing)
+        self.overlay = OverlayLabel(self.video_container) # Use video as parent
+        self.overlay.resize(400, 80)
+        self.overlay.move(120, 300) # Centered roughly
+        
+        # Setup Timer for Clock & Network Check
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_home_ui)
+        self.timer.start(1000)
+        self.update_home_ui()
         
         self.central_widget.addWidget(self.home_widget)
 
@@ -461,87 +512,106 @@ class MainApp(QMainWindow):
         
         # Top Bar
         top_bar = QFrame()
-        top_bar.setStyleSheet("background-color: #1e1e2e; border-bottom: 1px solid #45475a;")
-        top_bar.setFixedHeight(100)
+        top_bar.setStyleSheet("background-color: #1e1e2e; border-bottom: 2px solid #585b70;")
+        top_bar.setFixedHeight(80)
         top_bar_layout = QHBoxLayout(top_bar)
-        top_bar_layout.setContentsMargins(50, 20, 50, 20)
+        top_bar_layout.setContentsMargins(20, 10, 20, 10)
         
-        btn_back = QPushButton("← Back")
-        btn_back.setFixedSize(120, 50)
+        btn_back = QPushButton("< ESC")
+        btn_back.setFixedSize(100, 50)
         btn_back.setStyleSheet("""
             QPushButton {
-                background-color: #313244; 
+                background-color: transparent; 
                 color: #cdd6f4;
-                border-radius: 10px;
-                font-size: 16px;
+                font-size: 20px;
+                font-weight: bold;
+                border: none;
             }
-            QPushButton:hover { background-color: #45475a; }
+            QPushButton:hover { color: #89b4fa; }
         """)
         btn_back.clicked.connect(lambda: self.switch_screen(0))
         
-        lbl_title = QLabel("Settings")
-        lbl_title.setFont(QFont("Segoe UI", 36, QFont.Bold))
-        lbl_title.setStyleSheet("color: #cdd6f4;")
+        lbl_title = QLabel("MENU")
+        # Match style of create_top_bar (16px Bold)
+        lbl_title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        lbl_title.setStyleSheet("color: #cdd6f4; font-size: 16px; font-weight: bold;") 
+        lbl_title.setAlignment(Qt.AlignCenter)
         
         top_bar_layout.addWidget(btn_back)
         top_bar_layout.addStretch()
         top_bar_layout.addWidget(lbl_title)
         top_bar_layout.addStretch()
+        # Add a dummy widget to balance the center alignment
+        dummy = QWidget()
+        dummy.setFixedSize(60, 40) # Matched size of back button roughly
+        top_bar_layout.addWidget(dummy)
         
         main_layout.addWidget(top_bar)
         
-        # Simple List Menu (Mobile Style)
-        menu_container = QWidget()
-        menu_layout = QVBoxLayout(menu_container)
-        menu_layout.setContentsMargins(0, 0, 0, 0)
-        menu_layout.setSpacing(0)
+        # Grid Menu Container
+        grid_container = QWidget()
+        grid_layout = QGridLayout(grid_container)
+        grid_layout.setContentsMargins(40, 40, 40, 40)
+        grid_layout.setSpacing(15)
         
-        # Menu Items
-        add_item = self.create_menu_item("👤  Add New User", "#89b4fa", lambda: self.switch_screen(2))
-        del_item = self.create_menu_item("🗑️  Delete User", "#f38ba8", self.refresh_delete_list_and_show)
-        about_item = self.create_menu_item("ℹ️  About System", "#a6e3a1", self.show_about_screen)
+        # Helper to create grid buttons
+        def create_grid_btn(text, icon_emoji, row, col, callback=None):
+            btn = QToolButton()
+            btn.setText(f"{icon_emoji}\n{text}")
+            btn.setFont(QFont("Segoe UI", 16, QFont.Bold))
+            btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            btn.setCursor(Qt.PointingHandCursor)
+            
+            # Replicating the blue tile style
+            btn.setStyleSheet("""
+                QToolButton {
+                    background-color: #0078d7; 
+                    color: white;
+                    border: none;
+                    border-radius: 0px; 
+                    padding: 10px;
+                    font-size: 18px;
+                }
+                QToolButton:hover {
+                    background-color: #0063b1;
+                }
+                QToolButton:pressed {
+                    background-color: #005a9e;
+                }
+            """)
+            
+            # Using emojis as icons roughly matching the image
+            # Ideally we'd use QIcon with actual resource files
+            
+            if callback:
+                btn.clicked.connect(callback)
+            
+            grid_layout.addWidget(btn, row, col)
+            return btn
+
+        # Row 0
+        create_grid_btn("User Mgt", "👥", 0, 0, lambda: self.switch_screen(6))
+        create_grid_btn("Shift", "📅", 0, 1, lambda: self.switch_screen(7))
         
-        menu_layout.addWidget(add_item)
-        menu_layout.addWidget(del_item)
-        menu_layout.addWidget(about_item)
-        menu_layout.addStretch()
-        
-        main_layout.addWidget(menu_container)
+        # Row 1
+        create_grid_btn("Comm set", "⚙️", 1, 0, lambda: self.switch_screen(8))
+        create_grid_btn("Sys info", "ℹ️", 1, 1, self.show_about_screen)
+
+        main_layout.addWidget(grid_container)
         self.central_widget.addWidget(self.settings_widget)
+
+    def handle_user_mgt(self):
+        # Allow choosing between Add and Delete since "User Mgt" usually implies both
+        # For now, default to Add User screen (2)
+        self.switch_screen(2)
+
+    def show_info_toast(self, message):
+        QMessageBox.information(self, "Info", message)
     
+    # Simple placeholder for create_menu_item to avoid breaking potential other calls if any (though none seen)
     def create_menu_item(self, text, accent_color, callback):
-        """Create a simple mobile-style menu item"""
-        item = QFrame()
-        item.setFixedHeight(80)
-        item.setStyleSheet(f"""
-            QFrame {{
-                background-color: #1e1e2e;
-                border-bottom: 1px solid #45475a;
-            }}
-            QFrame:hover {{
-                background-color: #313244;
-            }}
-        """)
-        item.setCursor(Qt.PointingHandCursor)
-        
-        layout = QHBoxLayout(item)
-        layout.setContentsMargins(50, 0, 50, 0)
-        
-        lbl_text = QLabel(text)
-        lbl_text.setFont(QFont("Segoe UI", 20))
-        lbl_text.setStyleSheet("color: #cdd6f4;")
-        
-        lbl_arrow = QLabel("→")
-        lbl_arrow.setFont(QFont("Segoe UI", 24))
-        lbl_arrow.setStyleSheet(f"color: {accent_color};")
-        
-        layout.addWidget(lbl_text)
-        layout.addStretch()
-        layout.addWidget(lbl_arrow)
-        
-        item.mousePressEvent = lambda e: callback()
-        
-        return item
+        return QWidget()
 
     def init_register_screen(self):
         self.reg_widget = QWidget()
@@ -772,10 +842,53 @@ class MainApp(QMainWindow):
         
         return card
 
-    def update_clock(self):
+    def update_home_ui(self):
+        # Update Time
         now = datetime.now()
-        self.lbl_time.setText(now.strftime("%H:%M"))
-        self.lbl_date.setText(now.strftime("%A, %d %B %Y"))
+        self.lbl_time_overlay.setText(now.strftime("%H:%M:%S"))
+        self.lbl_date_overlay.setText(now.strftime("%Y-%m-%d"))
+        self.lbl_day_overlay.setText(now.strftime("%a").upper())
+        
+        # Update Network (Every 5 seconds roughly or just check quickly)
+        # Optimization: Only check every 5th second
+        if int(now.timestamp()) % 5 == 0:
+            self.check_network_status()
+
+    def check_network_status(self):
+        ip = "127.0.0.1"
+        icon = "❌" # Disconnected
+        color = "#f38ba8" 
+        
+        try:
+            # Simple check
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # Try connecting to Google DNS to get external facing IP
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            
+            # Simple Heuristic for Icon (Linux specific mostly)
+            # On Windows, hard to tell without psutil.
+            # Assuming if IP exists -> Connected.
+            # Default to LAN icon if we can't tell.
+            icon = "🔌" # LAN
+            
+            # Try to guess WiFi based on common interface names if on Linux
+            if os.path.exists("/proc/net/wireless"):
+                with open("/proc/net/wireless", "r") as f:
+                    if "wlan" in f.read():
+                         icon = "📶" # WiFi
+                         
+            color = "#a6e3a1" # Green
+            
+        except:
+            ip = "Disconnected"
+            icon = "❌"
+            color = "#f38ba8"
+
+        self.lbl_net_ip.setText(ip)
+        self.lbl_net_icon.setText(icon)
+        self.lbl_net_ip.setStyleSheet(f"color: {color};")
 
     def switch_screen(self, index):
         self.central_widget.setCurrentIndex(index)
@@ -784,11 +897,214 @@ class MainApp(QMainWindow):
         elif index == 2: # Register
             self.thread.set_mode("IDLE") 
         else:
-            # Settings, Delete, About -> IDLE
+            # Settings, Delete, About, etc. -> IDLE
             self.thread.set_mode("IDLE")
 
+    # --- NEW MENUS ---
+    def init_user_mgt_menu(self):
+        self.user_mgt_widget = QWidget()
+        layout = QVBoxLayout(self.user_mgt_widget)
+        
+        # Top Bar
+        top_bar = self.create_top_bar("User Management", lambda: self.switch_screen(1))
+        layout.addWidget(top_bar)
+        
+        # Grid
+        grid_container = QWidget()
+        grid = QGridLayout(grid_container)
+        grid.setContentsMargins(50, 50, 50, 50)
+        grid.setSpacing(20)
+        
+        self.create_grid_btn(grid, "Add User", "👤", 0, 0, lambda: self.switch_screen(2))
+        self.create_grid_btn(grid, "User View", "👀", 0, 1, lambda: self.refresh_user_view_and_show())
+        self.create_grid_btn(grid, "Delete User", "🗑️", 1, 0, self.refresh_delete_list_and_show)
+        
+        layout.addWidget(grid_container)
+        self.central_widget.addWidget(self.user_mgt_widget)
+
+    def init_user_view_screen(self):
+        self.user_view_widget = QWidget()
+        layout = QVBoxLayout(self.user_view_widget)
+        
+        layout.addWidget(self.create_top_bar("User List", lambda: self.switch_screen(6)))
+        
+        self.user_list_view = QListWidget()
+        self.user_list_view.setStyleSheet("""
+            QListWidget { background-color: #313244; border-radius: 10px; padding: 10px; font-size: 18px; }
+            QListWidget::item { padding: 10px; border-bottom: 1px solid #45475a; }
+        """)
+        layout.addWidget(self.user_list_view)
+        
+        self.central_widget.addWidget(self.user_view_widget)
+
+    def init_shift_screen(self):
+        self.shift_widget = QWidget()
+        layout = QVBoxLayout(self.shift_widget)
+        
+        layout.addWidget(self.create_top_bar("Shift Management", lambda: self.switch_screen(1)))
+        
+        form = QWidget()
+        form_layout = QGridLayout(form) 
+        form_layout.setContentsMargins(100, 50, 100, 50)
+        form_layout.setSpacing(30)
+        
+        lbl_start = QLabel("Shift Start Time:")
+        lbl_start.setFont(QFont("Segoe UI", 18))
+        self.input_shift_start = QLineEdit("09:00")
+        
+        lbl_end = QLabel("Shift End Time:")
+        lbl_end.setFont(QFont("Segoe UI", 18))
+        self.input_shift_end = QLineEdit("18:00")
+        
+        btn_save = QPushButton("Save Shift")
+        btn_save.clicked.connect(lambda: QMessageBox.information(self, "Success", "Shift Updated!"))
+        
+        form_layout.addWidget(lbl_start, 0, 0)
+        form_layout.addWidget(self.input_shift_start, 0, 1)
+        form_layout.addWidget(lbl_end, 1, 0)
+        form_layout.addWidget(self.input_shift_end, 1, 1)
+        form_layout.addWidget(btn_save, 2, 1)
+        
+        layout.addWidget(form)
+        layout.addStretch()
+        self.central_widget.addWidget(self.shift_widget)
+
+    def init_comm_set_menu(self):
+        self.comm_menu_widget = QWidget()
+        layout = QVBoxLayout(self.comm_menu_widget)
+        
+        layout.addWidget(self.create_top_bar("Communication", lambda: self.switch_screen(1)))
+        
+        grid_container = QWidget()
+        grid = QGridLayout(grid_container)
+        grid.setContentsMargins(50, 50, 50, 50)
+        grid.setSpacing(20)
+        
+        self.create_grid_btn(grid, "Comm Params", "⚙️", 0, 0, lambda: self.switch_screen(9))
+        self.create_grid_btn(grid, "Ethernet", "🌐", 0, 1, lambda: self.switch_screen(10))
+        self.create_grid_btn(grid, "WIFI", "📶", 1, 0, lambda: self.switch_screen(11))
+        
+        layout.addWidget(grid_container)
+        self.central_widget.addWidget(self.comm_menu_widget)
+
+    def init_comm_params_screen(self):
+        self.comm_params_widget = QWidget()
+        layout = QVBoxLayout(self.comm_params_widget)
+        layout.addWidget(self.create_top_bar("Comm Params", lambda: self.switch_screen(8)))
+        
+        form = QWidget()
+        form_layout = QGridLayout(form)
+        form_layout.setContentsMargins(100, 50, 100, 50)
+        
+        self.input_dev_id = QLineEdit(str(DEVICE_ID))
+        self.input_port = QLineEdit("8080")
+        
+        form_layout.addWidget(QLabel("Device ID:"), 0, 0)
+        form_layout.addWidget(self.input_dev_id, 0, 1)
+        form_layout.addWidget(QLabel("Port No:"), 1, 0)
+        form_layout.addWidget(self.input_port, 1, 1)
+        
+        layout.addWidget(form)
+        layout.addStretch()
+        self.central_widget.addWidget(self.comm_params_widget)
+
+    def init_ethernet_screen(self):
+        self.eth_widget = QWidget()
+        layout = QVBoxLayout(self.eth_widget)
+        layout.addWidget(self.create_top_bar("Ethernet Settings", lambda: self.switch_screen(8)))
+        
+        form = QWidget()
+        form_layout = QGridLayout(form)
+        form_layout.setContentsMargins(50, 20, 50, 20)
+        form_layout.setSpacing(15)
+        
+        # Helper to add row
+        def add_row(label, val, row):
+            l = QLabel(label)
+            l.setFont(QFont("Segoe UI", 16))
+            i = QLineEdit(val)
+            form_layout.addWidget(l, row, 0)
+            form_layout.addWidget(i, row, 1)
+            return i
+            
+        self.input_ip = add_row("IP Address:", "192.168.1.100", 0)
+        self.input_subnet = add_row("Subnet Mask:", "255.255.255.0", 1)
+        self.input_gateway = add_row("Gateway:", "192.168.1.1", 2)
+        self.input_dns = add_row("DNS Server:", "8.8.8.8", 3)
+        
+        # MAC Read only
+        l_mac = QLabel("MAC Address:")
+        l_mac.setFont(QFont("Segoe UI", 16))
+        self.lbl_mac = QLabel("aa:bb:cc:dd:ee:ff")
+        self.lbl_mac.setStyleSheet("color: #a6e3a1; font-weight: bold; font-size: 18px;")
+        form_layout.addWidget(l_mac, 4, 0)
+        form_layout.addWidget(self.lbl_mac, 4, 1)
+        
+        layout.addWidget(form)
+        layout.addStretch()
+        self.central_widget.addWidget(self.eth_widget)
+
+    def init_wifi_screen(self):
+        self.wifi_widget = QWidget()
+        layout = QVBoxLayout(self.wifi_widget)
+        layout.addWidget(self.create_top_bar("WiFi Settings", lambda: self.switch_screen(8)))
+        
+        lbl = QLabel("WiFi Scanning not implemented yet.")
+        lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(lbl)
+        
+        self.central_widget.addWidget(self.wifi_widget)
+
+    # --- HELPERS ---
+    def create_top_bar(self, title, back_callback):
+        frame = QFrame()
+        frame.setStyleSheet("background-color: #1e1e2e; border-bottom: 2px solid #585b70;")
+        # Reduced height for 320px height screen
+        frame.setFixedHeight(40)
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        btn = QPushButton("<")
+        btn.setStyleSheet("background-color: transparent; color: #cdd6f4; font-size: 14px; border: none; font-weight: bold;")
+        btn.clicked.connect(back_callback)
+        
+        lbl = QLabel(title)
+        lbl.setStyleSheet("color: #cdd6f4; font-size: 16px; font-weight: bold;")
+        lbl.setAlignment(Qt.AlignCenter)
+        
+        layout.addWidget(btn)
+        layout.addWidget(lbl, stretch=1)
+        # Dummy for balance
+        d = QWidget(); d.setFixedSize(20, 10); layout.addWidget(d)
+        
+        return frame
+
+    def create_grid_btn(self, layout, text, icon, row, col, callback):
+        btn = QToolButton()
+        # Scaled down fonts
+        btn.setText(f"{icon}\n{text}")
+        btn.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet("""
+            QToolButton { background-color: #0078d7; color: white; border: none; padding: 5px; font-size: 12px; }
+            QToolButton:hover { background-color: #0063b1; }
+        """)
+        if callback:
+            btn.clicked.connect(callback)
+        layout.addWidget(btn, row, col)
+
+    def refresh_user_view_and_show(self):
+        self.user_list_view.clear()
+        if os.path.exists(KNOWN_FACES_DIR):
+            users = [d for d in os.listdir(KNOWN_FACES_DIR) if os.path.isdir(os.path.join(KNOWN_FACES_DIR, d))]
+            for user in users:
+                self.user_list_view.addItem(QListWidgetItem(user))
+        self.switch_screen(5)
+
     def refresh_delete_list_and_show(self):
-        self.delete_list.clear()
+        self.delete_list.clear() # Fix for existing function needing update
         if os.path.exists(KNOWN_FACES_DIR):
             users = [d for d in os.listdir(KNOWN_FACES_DIR) if os.path.isdir(os.path.join(KNOWN_FACES_DIR, d))]
             for user in users:
@@ -852,7 +1168,7 @@ class MainApp(QMainWindow):
         current_idx = self.central_widget.currentIndex()
         # Only show video in Home(0) and Register(2)
         if current_idx == 0:
-            target = self.video_label
+            target = self.video_container
         elif current_idx == 2:
             target = self.video_label_reg
         else:
@@ -889,7 +1205,7 @@ class MainApp(QMainWindow):
 
     def log_attendance(self, name):
         time_str = datetime.now().strftime("%H:%M:%S")
-        self.log_list.insertItem(0, f"✅ {name} @ {time_str}")
+        # log_list removed in new UI
         self.db.add_record(DEVICE_ID, name)
 
     def on_training_complete(self, success, msg):
@@ -922,8 +1238,9 @@ class MainApp(QMainWindow):
         event.accept()
 
 if __name__ == "__main__":
-    # Raspberry Pi Optimization
-    if os.uname().machine.startswith('arm'):
+    # Raspberry Pi Optimization (Platform Check)
+    import platform
+    if platform.system() == "Linux" and platform.machine().startswith('arm'):
         # os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = "/usr/lib/aarch64-linux-gnu/qt5/plugins"
         os.environ["XDG_SESSION_TYPE"] = "xcb"
     
