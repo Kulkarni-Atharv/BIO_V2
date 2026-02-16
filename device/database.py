@@ -261,6 +261,21 @@ class LocalDatabase:
         try:
             # 1. Determine Punch Type (Auto-toggle)
             last_punch = self.get_last_punch_today(user_id)
+            
+            # [NEW] Cooldown Check
+            # Prevent multiple punches within X seconds
+            COOLDOWN_SECONDS = 60 
+            if last_punch:
+                 last_time = last_punch['punch_time']
+                 # Ensure last_time is datetime
+                 if isinstance(last_time, str):
+                     last_time = datetime.strptime(last_time, "%Y-%m-%d %H:%M:%S")
+                 
+                 diff = (dt_now - last_time).total_seconds()
+                 if diff < COOLDOWN_SECONDS:
+                     logger.info(f"Ignored punch for {name} (Cooldown: {int(diff)}s < {COOLDOWN_SECONDS}s)")
+                     return None
+
             if not last_punch:
                 punch_type = 'IN'
             else:
