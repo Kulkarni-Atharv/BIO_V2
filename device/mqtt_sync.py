@@ -64,6 +64,8 @@ class MQTTSyncService:
         """Helper to serialize dates and times for JSON"""
         if isinstance(obj, (datetime, date, dt_time)):
             return str(obj)
+        if hasattr(obj, 'total_seconds'): # Handle timedelta
+            return str(obj)
         raise TypeError(f"Type {type(obj)} not serializable")
 
     def run(self):
