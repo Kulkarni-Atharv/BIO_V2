@@ -14,6 +14,19 @@ venv/
 
 # Data (Privacy)
 known_faces/
+data/known_faces/
+data/embeddings.npy
+data/names.json
+data/processed_images.json
+
+# Diagnostic / temp output
+scripts/diag_report.json
+scripts/pipeline_report.txt
+scripts/report.txt
 
 # Logs
 *.log
+
+# OS junk
+.DS_Store
+Thumbs.db

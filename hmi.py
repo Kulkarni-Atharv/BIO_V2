@@ -27,7 +27,7 @@ from PyQt5.QtGui import QImage, QPixmap, QFont, QColor, QPainter, QPen, QBrush, 
 from core.recognizer import FaceRecognizer
 from device.database import LocalDatabase
 from core.face_encoder import FaceEncoder
-from shared.config import DEVICE_ID, KNOWN_FACES_DIR, VERIFICATION_FRAMES, SERVER_IP
+from shared.config import DEVICE_ID, KNOWN_FACES_DIR, VERIFICATION_FRAMES
 
 # --- STYLESHEETS ---
 STYLE_MAIN = """
@@ -374,6 +374,8 @@ class MainApp(QMainWindow):
         self.init_comm_params_screen() # 9
         self.init_ethernet_screen()  # 10
         self.init_wifi_screen()      # 11
+        
+        self.init_employee_list_screen() # 12
         
         # NOW start the video thread after all widgets exist
         self.thread = VideoThread()
@@ -894,10 +896,11 @@ class MainApp(QMainWindow):
         self.central_widget.setCurrentIndex(index)
         if index == 0:
             self.thread.set_mode("RECOGNITION")
-        elif index == 2: # Register
-            self.thread.set_mode("IDLE") 
+        elif index == 2:  # Register
+            self.thread.set_mode("IDLE")
+        elif index == 12: # Employee List — always refresh on open
+            self.refresh_employee_list()
         else:
-            # Settings, Delete, About, etc. -> IDLE
             self.thread.set_mode("IDLE")
 
     # --- NEW MENUS ---
@@ -915,9 +918,10 @@ class MainApp(QMainWindow):
         grid.setContentsMargins(50, 50, 50, 50)
         grid.setSpacing(20)
         
-        self.create_grid_btn(grid, "Add User", "👤", 0, 0, lambda: self.switch_screen(2))
-        self.create_grid_btn(grid, "User View", "👀", 0, 1, lambda: self.refresh_user_view_and_show())
-        self.create_grid_btn(grid, "Delete User", "🗑️", 1, 0, self.refresh_delete_list_and_show)
+        self.create_grid_btn(grid, "Add User",       "👤", 0, 0, lambda: self.switch_screen(2))
+        self.create_grid_btn(grid, "Employee List",  "📋", 0, 1, lambda: self.switch_screen(12))
+        self.create_grid_btn(grid, "User View",      "👀", 1, 0, lambda: self.refresh_user_view_and_show())
+        self.create_grid_btn(grid, "Delete User",    "🗑️", 1, 1, self.refresh_delete_list_and_show)
         
         layout.addWidget(grid_container)
         self.central_widget.addWidget(self.user_mgt_widget)
@@ -1254,6 +1258,152 @@ class MainApp(QMainWindow):
         self.thread.stop()
         event.accept()
 
+    def init_employee_list_screen(self):
+        """Screen 12 — Employee list from dashboard with face-registration status."""
+        self.emp_list_widget = QWidget()
+        layout = QVBoxLayout(self.emp_list_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Top bar
+        top_bar = self.create_top_bar("Employee List", lambda: self.switch_screen(6))
+        layout.addWidget(top_bar)
+
+        # Hint label
+        hint = QLabel("Tap ⚠️ row to register face")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet("color: #f9e2af; font-size: 11px; padding: 2px;")
+        layout.addWidget(hint)
+
+        # List widget
+        self.emp_list_view = QListWidget()
+        self.emp_list_view.setFont(QFont("Segoe UI", 13))
+        self.emp_list_view.setStyleSheet("""
+            QListWidget {
+                background-color: #1e1e2e;
+                border: none;
+                padding: 4px;
+            }
+            QListWidget::item {
+                background-color: #313244;
+                border-radius: 6px;
+                margin: 3px 6px;
+                padding: 8px 10px;
+                border-left: 4px solid #45475a;
+            }
+            QListWidget::item:selected {
+                background-color: #45475a;
+            }
+            QListWidget::item:hover {
+                background-color: #3a3a4a;
+            }
+        """)
+        self.emp_list_view.itemClicked.connect(self.on_employee_item_clicked)
+        layout.addWidget(self.emp_list_view)
+
+        # Bottom refresh button
+        btn_refresh = QPushButton("🔄  Refresh List")
+        btn_refresh.setFixedHeight(36)
+        btn_refresh.setStyleSheet("""
+            QPushButton {
+                background-color: #313244;
+                color: #cdd6f4;
+                border: none;
+                border-radius: 0px;
+                font-size: 12px;
+            }
+            QPushButton:hover { background-color: #45475a; }
+        """)
+        btn_refresh.clicked.connect(self.refresh_employee_list)
+        layout.addWidget(btn_refresh)
+
+        self.central_widget.addWidget(self.emp_list_widget)
+
+    def refresh_employee_list(self):
+        """Reload employee list from SQLite and mark registration status."""
+        self.emp_list_view.clear()
+
+        # Registered face folders: 'user_id_name' or just 'name'
+        registered_ids = set()
+        if os.path.exists(KNOWN_FACES_DIR):
+            for folder in os.listdir(KNOWN_FACES_DIR):
+                if os.path.isdir(os.path.join(KNOWN_FACES_DIR, folder)):
+                    # Try to extract user_id from folder name 'ID_Name'
+                    registered_ids.add(folder.split('_')[0] if '_' in folder else folder)
+
+        users = self.db.get_all_users()
+
+        if not users:
+            item = QListWidgetItem("  No employees found. Sync from dashboard first.")
+            item.setForeground(QColor("#a6adc8"))
+            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+            self.emp_list_view.addItem(item)
+            return
+
+        for u in users:
+            uid  = u["user_id"]
+            name = u["name"]
+            is_registered = (uid in registered_ids)
+
+            if is_registered:
+                badge = "✅"
+                color = "#a6e3a1"   # green
+                left_border = "#a6e3a1"
+            else:
+                badge = "⚠️"
+                color = "#f9e2af"   # yellow
+                left_border = "#f9e2af"
+
+            label = f"  {badge}  {uid:<8}  {name}"
+            item  = QListWidgetItem(label)
+            item.setForeground(QColor(color))
+            # Store user data for click handler
+            item.setData(Qt.UserRole, {"user_id": uid, "name": name, "registered": is_registered})
+            # Colour the left border via stylesheet on item isn't directly possible —
+            # we differentiate only by foreground colour
+            self.emp_list_view.addItem(item)
+
+        # Status summary at bottom
+        total = len(users)
+        reg_count = sum(1 for u in users if u["user_id"] in registered_ids)
+        summary = QListWidgetItem(f"  📊  {reg_count}/{total} registered")
+        summary.setForeground(QColor("#89b4fa"))
+        summary.setFlags(summary.flags() & ~Qt.ItemIsSelectable)
+        self.emp_list_view.addItem(summary)
+
+    def on_employee_item_clicked(self, item):
+        """Pre-fill name/ID and jump to face capture screen for unregistered users."""
+        data = item.data(Qt.UserRole)
+        if not data:
+            return  # Summary row or info row
+
+        uid  = data["user_id"]
+        name = data["name"]
+        is_registered = data["registered"]
+
+        if is_registered:
+            QMessageBox.information(
+                self, "Already Registered",
+                f"{name} ({uid}) already has a registered face.\n"
+                "Delete the existing entry first to re-register."
+            )
+            return
+
+        # Pre-fill the registration form and go to capture screen
+        self.input_name.setText(name)
+        self.input_id.setText(uid)
+        self.lbl_status.setText("Ready to Scan")
+        self.lbl_status.setStyleSheet("color: #cdd6f4;")
+        self.btn_start.show()
+        self.btn_cancel_reg.show()
+        self.progress_ring.hide()
+        self.switch_screen(2)  # Go to Register screen (index 2)
+
+    def closeEvent(self, event):
+        self.thread.stop()
+        event.accept()
+
+
 if __name__ == "__main__":
     # Raspberry Pi Optimization (Platform Check)
     import platform
@@ -1282,3 +1432,4 @@ if __name__ == "__main__":
         sys.exit(app.exec_())
     except Exception as e:
         print(f"Application Crashed: {e}")
+

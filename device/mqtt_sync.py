@@ -1,148 +1,211 @@
-import sys
-import os
-import json
-import time
-import logging
-import ssl
+"""
+device/mqtt_sync.py
+────────────────────
+MQTT service with request-response pattern for employee sync:
+
+  PUBLISH attendance  → p/a/1/updates
+  PUBLISH request     → p/a/1/request-users   (ask dashboard to send employee list)
+  SUBSCRIBE response  → p/a/1/receive-users   (receive [{user_id, name}, ...])
+
+On connect: immediately sends a request-users message so the device
+always gets a fresh employee list after coming online.
+On every re-connect (internet restored): requests again to catch any
+new employees added on the dashboard while offline.
+"""
+
+import sys, os, json, time, socket, logging, ssl
 import paho.mqtt.client as mqtt
 from datetime import datetime, date, time as dt_time
 
-# Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from shared.config import (
-    MQTT_BROKER, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD, 
-    MQTT_TOPIC_PREFIX, DEVICE_ID
+    MQTT_BROKER, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD,
+    MQTT_TOPIC_PREFIX, MQTT_TOPIC_REQUEST_USERS, MQTT_TOPIC_RECEIVE_USERS, DEVICE_ID
 )
 from device.database import LocalDatabase
 
-# Configure Logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger("MQTTSync")
+logger = logging.getLogger("MQTT_Sync")
+
+SYNC_INTERVAL  = 10   # seconds between attendance publish cycles
+RETRY_INTERVAL = 15   # seconds to wait when no internet
+
+
+# ─── Internet probe ───────────────────────────────────────────────────────────
+
+def _has_internet(host="8.8.8.8", port=53, timeout=3.0):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+# ─── Service ─────────────────────────────────────────────────────────────────
 
 class MQTTSyncService:
     def __init__(self):
-        self.db = LocalDatabase()
-        self.client = mqtt.Client()
+        self.db        = LocalDatabase()
+        self.client    = mqtt.Client()
+        self.connected = False
+
+        # Derived topics
+        self.pub_attendance   = f"{MQTT_TOPIC_PREFIX}/updates"
+        self.pub_req_users    = MQTT_TOPIC_REQUEST_USERS   # publish to request list
+        self.sub_recv_users   = MQTT_TOPIC_RECEIVE_USERS   # subscribe to receive list
+
+        # Auth + TLS
         self.client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-        
-        # SSL Context for EMQX Cloud (Port 8883)
         if MQTT_PORT == 8883:
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE # Adjust if using CA certs
-            self.client.tls_set_context(context)
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode    = ssl.CERT_NONE
+            self.client.tls_set_context(ctx)
 
-        self.client.on_connect = self.on_connect
-        self.client.on_disconnect = self.on_disconnect
-        self.client.on_publish = self.on_publish
-        
-        self.topic = f"{MQTT_TOPIC_PREFIX}/{DEVICE_ID}/updates"
-        self.connected = False
+        self.client.on_connect    = self._on_connect
+        self.client.on_disconnect = self._on_disconnect
+        self.client.on_message    = self._on_message
 
-    def on_connect(self, client, userdata, flags, rc):
+    # ── MQTT callbacks ────────────────────────────────────────────────────────
+
+    def _on_connect(self, client, userdata, flags, rc):
         if rc == 0:
-            logger.info("Connected to MQTT Broker!")
             self.connected = True
-        else:
-            logger.error(f"Failed to connect, return code {rc}")
+            logger.info("Connected to EMQX broker.")
 
-    def on_disconnect(self, client, userdata, rc):
-        logger.warning(f"Disconnected from MQTT Broker (rc={rc})")
+            # Subscribe to receive employee list from dashboard
+            client.subscribe(self.sub_recv_users, qos=1)
+            logger.info("Subscribed: %s", self.sub_recv_users)
+
+            # Immediately request the employee list so we are always up-to-date
+            self._request_users()
+        else:
+            logger.error("MQTT connect failed (rc=%d).", rc)
+
+    def _on_disconnect(self, client, userdata, rc):
+        logger.warning("Disconnected from MQTT broker (rc=%d).", rc)
         self.connected = False
 
-    def on_publish(self, client, userdata, mid):
-        # logger.debug(f"Message {mid} published.")
-        pass
+    def _on_message(self, client, userdata, msg):
+        """Handle incoming employee list from dashboard on p/a/1/receive-users."""
+        try:
+            payload = json.loads(msg.payload.decode("utf-8"))
+            topic   = msg.topic
 
-    def json_serializer(self, obj):
-        """Helper to serialize dates and times for JSON"""
+            if topic == self.sub_recv_users:
+                if isinstance(payload, list):
+                    self.db.upsert_users(payload)
+                    logger.info("Received employee list: %d employees saved.", len(payload))
+                elif isinstance(payload, dict):
+                    # Dashboard may send a single employee
+                    self.db.upsert_users([payload])
+                    logger.info("Received single employee: %s", payload.get("name"))
+                else:
+                    logger.warning("Unexpected payload type on receive-users: %s", type(payload))
+            else:
+                logger.debug("Unhandled topic: %s", topic)
+
+        except json.JSONDecodeError as e:
+            logger.error("JSON decode error on incoming message: %s", e)
+        except Exception as e:
+            logger.error("Error in on_message: %s", e)
+
+    # ── Request user list from dashboard ──────────────────────────────────────
+
+    def _request_users(self):
+        """Publish a request so the dashboard sends the employee list."""
+        payload = json.dumps({"device_id": DEVICE_ID, "action": "get-users"})
+        self.client.publish(self.pub_req_users, payload, qos=1)
+        logger.info("Sent employee list request on: %s", self.pub_req_users)
+
+    # ── JSON serialiser ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _serialise(obj):
         if isinstance(obj, (datetime, date, dt_time)):
             return str(obj)
-        if hasattr(obj, 'total_seconds'): # Handle timedelta
-            return str(obj)
-        raise TypeError(f"Type {type(obj)} not serializable")
+        raise TypeError(f"Not serialisable: {type(obj)}")
+
+    # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self):
-        logger.info(f"Starting MQTT Sync Service...")
-        logger.info(f"Broker: {MQTT_BROKER}:{MQTT_PORT}")
-        logger.info(f"Topic: {self.topic}")
+        logger.info("MQTT Sync Service starting...")
+        logger.info("Attendance publish : %s", self.pub_attendance)
+        logger.info("Request users      : %s", self.pub_req_users)
+        logger.info("Receive users      : %s", self.sub_recv_users)
 
         try:
-            self.client.connect(MQTT_BROKER, MQTT_PORT, 60)
-            self.client.loop_start() 
-            
-            # Allow time for connection
-            time.sleep(2)
-
             while True:
+                if not _has_internet():
+                    logger.warning("No internet — retrying in %ds.", RETRY_INTERVAL)
+                    self.connected = False
+                    time.sleep(RETRY_INTERVAL)
+                    continue
+
+                if not self.connected:
+                    logger.info("Internet detected — connecting to broker...")
+                    try:
+                        self.client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+                        self.client.loop_start()
+                        time.sleep(2)  # allow handshake + subscribe
+                    except Exception as e:
+                        logger.error("MQTT connect error: %s — retry in %ds.", e, RETRY_INTERVAL)
+                        time.sleep(RETRY_INTERVAL)
+                        continue
+
                 if self.connected:
-                    self.sync_records()
-                else:
-                    logger.warning("Waiting for connection...")
-                
-                time.sleep(5) # Sync Interval
+                    self._publish_attendance()
+
+                time.sleep(SYNC_INTERVAL)
 
         except KeyboardInterrupt:
-            logger.info("Stopping Sync Service...")
+            logger.info("Stopping MQTT Sync Service...")
             self.client.loop_stop()
             self.client.disconnect()
-        except Exception as e:
-            logger.error(f"Critical Error: {e}")
 
-    def sync_records(self):
-        # 1. Fetch Unsynced Records (Batch of 10)
-        records = self.db.get_unsynced_records(limit=10)
-        
+    # ── Publish pending attendance records ─────────────────────────────────────
+
+    def _publish_attendance(self):
+        records = self.db.get_unsynced_mqtt_records(limit=10)
         if not records:
             return
 
-        logger.info(f"Found {len(records)} unsynced records.")
-        
+        logger.info("Publishing %d attendance records...", len(records))
         synced_ids = []
-        
-        for record in records:
-            try:
-                # 2. Serialize
-                # Filter payload based on user requirements
-                filtered_record = {
-                    "id": record.get("id"),
-                    "user_id": record.get("user_id"),
-                    "punch_time": record.get("punch_time"),
-                    "punch_type": record.get("punch_type"),
-                    "attendance_status": record.get("attendance_status"),
-                    "late_minutes": record.get("late_minutes"),
-                    "early_departure_minutes": record.get("early_departure_minutes"),
-                    "overtime_minutes": record.get("overtime_minutes"),
-                    "confidence": record.get("confidence"),
-                    "shift_id": record.get("shift_id")
-                }
-                
-                payload = json.dumps(filtered_record, default=self.json_serializer)
-                
-                # 3. Publish
-                info = self.client.publish(self.topic, payload, qos=1)
-                info.wait_for_publish(timeout=2)
-                
-                if info.is_published():
-                    synced_ids.append(record['id'])
-                    logger.info(f"Published Record ID: {record['id']}")
-                else:
-                    logger.warning(f"Failed to publish Record ID: {record['id']}")
-            
-            except Exception as e:
-                logger.error(f"Error publishing record {record.get('id')}: {e}")
 
-        # 4. Mark Synced
+        for rec in records:
+            payload = {
+                "id":                      rec.get("id"),
+                "user_id":                 rec.get("user_id"),
+                "name":                    rec.get("name"),
+                "device_id":               rec.get("device_id"),
+                "punch_time":              rec.get("punch_time"),
+                "punch_type":              rec.get("punch_type"),
+                "attendance_status":       rec.get("attendance_status"),
+                "late_minutes":            rec.get("late_minutes"),
+                "early_departure_minutes": rec.get("early_departure_minutes"),
+                "overtime_minutes":        rec.get("overtime_minutes"),
+                "confidence":              rec.get("confidence"),
+            }
+            try:
+                msg  = json.dumps(payload, default=self._serialise)
+                info = self.client.publish(self.pub_attendance, msg, qos=1)
+                info.wait_for_publish(timeout=3)
+                if info.is_published():
+                    synced_ids.append(rec["id"])
+                else:
+                    logger.warning("Publish timeout for record %s.", rec["id"])
+            except Exception as e:
+                logger.error("Error publishing record %s: %s", rec.get("id"), e)
+
         if synced_ids:
-            self.db.mark_as_synced(synced_ids)
-            logger.info(f"Marked {len(synced_ids)} records as synced.")
+            self.db.mark_mqtt_synced(synced_ids)
+            logger.info("MQTT synced: %d records marked.", len(synced_ids))
+
 
 if __name__ == "__main__":
-    service = MQTTSyncService()
-    service.run()
+    MQTTSyncService().run()

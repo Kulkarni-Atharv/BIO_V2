@@ -6,41 +6,42 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
-# Server Configuration
-SERVER_IP = "127.0.0.1"  # Default to localhost for testing
-SERVER_PORT = 8000
-API_BASE_URL = f"http://{SERVER_IP}:{SERVER_PORT}/api"
+# ─── Device Configuration ─────────────────────────────────────────────────────
+DEVICE_ID = "1"
+
+# ─── Local SQLite Databases ───────────────────────────────────────────────────
+# On-device DB (CM4 / Raspberry Pi) — no MySQL needed
+DB_PATH = os.path.join(DATA_DIR, "attendance_buffer.db")
+
+# Server-side DB (created automatically on the LAN receiver PC)
 SERVER_DB_PATH = os.path.join(DATA_DIR, "server_attendance.db")
 
-# Device Configuration
-DEVICE_ID = "cm4_device_001"
-
-# MySQL Configuration
-MYSQL_HOST = "127.0.0.1" # REPLACE WITH YOUR LAPTOP IP
-MYSQL_USER = "root"
-MYSQL_PASSWORD = "Atharv@123" # REPLACE WITH YOUR PASSWORD
-MYSQL_DB = "bio_attendance"
-MYSQL_PORT = 3306
-
-DB_PATH = os.path.join(DATA_DIR, "attendance_buffer.db")
+# ─── Face Data ────────────────────────────────────────────────────────────────
 KNOWN_FACES_DIR = os.path.join(DATA_DIR, "known_faces")
-
-# Models & Embeddings
-YUNET_PATH = os.path.join(ASSETS_DIR, "face_detection_yunet_2023mar.onnx")
-MOBILEFACENET_PATH = os.path.join(ASSETS_DIR, "MobileFaceNet.onnx")
 EMBEDDINGS_FILE = os.path.join(DATA_DIR, "embeddings.npy")
-NAMES_FILE = os.path.join(DATA_DIR, "names.json")
+NAMES_FILE      = os.path.join(DATA_DIR, "names.json")
 
-# MQTT Configuration
-# EMQX Cloud Broker
-MQTT_BROKER = "m318c100.ala.us-east-1.emqxsl.com"
-MQTT_PORT = 8883 # SSL Port
-MQTT_USERNAME = "autonex"
-MQTT_PASSWORD = "Autonex@2025"
-MQTT_TOPIC_PREFIX = "p/attendance" # Topic: p/attendance/{device_id}/updates
+# ─── Models ───────────────────────────────────────────────────────────────────
+YUNET_PATH        = os.path.join(ASSETS_DIR, "face_detection_yunet_2023mar.onnx")
+MOBILEFACENET_PATH = os.path.join(ASSETS_DIR, "MobileFaceNet.onnx")
 
-# Camera Configuration
-CAMERA_INDEX = 0 
-DETECTION_THRESHOLD = 0.6 
+# ─── LAN Sync (PC / Laptop on same network) ───────────────────────────────────
+# Set this to the IP address of the laptop/PC running server/api.py
+LAN_SERVER_IP   = "192.168.1.100"   # <-- CHANGE to your PC's local IP
+LAN_SERVER_PORT = 8000
+API_BASE_URL    = f"http://{LAN_SERVER_IP}:{LAN_SERVER_PORT}/api"
+
+# ─── MQTT Cloud Sync (EMQX — only used when internet is available) ─────────────
+MQTT_BROKER       = "m318c100.ala.us-east-1.emqxsl.com"
+MQTT_PORT         = 8883  # SSL
+MQTT_USERNAME     = "autonex"
+MQTT_PASSWORD     = "Autonex@2025"
+MQTT_TOPIC_PREFIX          = "p/a/1"               # Publish attendance: p/a/1/updates
+MQTT_TOPIC_REQUEST_USERS   = "p/a/1/request-users"  # Publish — ask dashboard for employee list
+MQTT_TOPIC_RECEIVE_USERS   = "p/a/1/receive-users"  # Subscribe — receive employee list from dashboard
+
+# ─── Camera & Recognition ─────────────────────────────────────────────────────
+CAMERA_INDEX          = 0
+DETECTION_THRESHOLD   = 0.6
 RECOGNITION_THRESHOLD = 0.70
-VERIFICATION_FRAMES = 5 
+VERIFICATION_FRAMES   = 5

@@ -1,11 +1,20 @@
+# Core
 numpy
 requests
+paho-mqtt
+
+# Face recognition
+opencv-python-headless
+# Use opencv-python if you need a display locally
+
+# UI (on device only)
+PyQt5
+
+# LAN receiver server (on PC only)
 fastapi
 uvicorn
-pyodbc
-paho-mqtt
-ujson
 python-multipart
-PyQt5
-opencv-python
-mysql-connector-python
+pydantic
+
+# sqlite3 is built into Python — no extra install needed
+# mysql-connector-python removed (no longer required)
