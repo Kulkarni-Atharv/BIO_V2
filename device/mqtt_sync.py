@@ -93,24 +93,36 @@ class MQTTSyncService:
     def _on_message(self, client, userdata, msg):
         """Handle incoming employee list from dashboard on p/a/1/receive-users."""
         try:
-            payload = json.loads(msg.payload.decode("utf-8"))
+            raw     = msg.payload.decode("utf-8")
             topic   = msg.topic
+
+            logger.info("─" * 50)
+            logger.info("MESSAGE RECEIVED")
+            logger.info("  Topic   : %s", topic)
+            logger.info("  Payload : %s", raw)
+            logger.info("─" * 50)
+
+            payload = json.loads(raw)
 
             if topic == self.sub_recv_users:
                 if isinstance(payload, list):
+                    logger.info("  Type    : list  (%d employees)", len(payload))
+                    for i, emp in enumerate(payload, 1):
+                        logger.info("    [%d] user_id=%-10s  name=%s",
+                                    i, emp.get("user_id","?"), emp.get("name","?"))
                     self.db.upsert_users(payload)
-                    logger.info("Received employee list: %d employees saved.", len(payload))
+                    logger.info("  Saved %d employees to local DB.", len(payload))
                 elif isinstance(payload, dict):
-                    # Dashboard may send a single employee
+                    logger.info("  Type    : single employee -> %s", payload)
                     self.db.upsert_users([payload])
-                    logger.info("Received single employee: %s", payload.get("name"))
+                    logger.info("  Saved 1 employee to local DB.")
                 else:
-                    logger.warning("Unexpected payload type on receive-users: %s", type(payload))
+                    logger.warning("  Unexpected payload type: %s", type(payload))
             else:
                 logger.debug("Unhandled topic: %s", topic)
 
         except json.JSONDecodeError as e:
-            logger.error("JSON decode error on incoming message: %s", e)
+            logger.error("JSON decode error: %s  |  raw=%s", e, msg.payload)
         except Exception as e:
             logger.error("Error in on_message: %s", e)
 
